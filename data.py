@@ -11,6 +11,8 @@ class NiftiDataSet(torch.utils.data.Dataset):
 		self.transform = transform
 		self.dirlist = os.listdir(data_folder)
 		self.train = train
+		self.img_transform = img_transform
+		self.label_transform = label_transform
 
 	def __checkexist__(self,path):
 		if os.path.exists(path):
@@ -53,12 +55,20 @@ class NiftiDataSet(torch.utils.data.Dataset):
 			sample = self.transform(sample)
 
 		if self.img_transform:
-			img = self.transform(img)
+			img = self.img_transform(sample['image'])
+			img = [img]
 
 		if self.label_transform:
-			seg = self.transform(seg)
+			seg = self.label_transform(sample['segmentation'])
+			seg = [seg]
 
 		sample = {'image':img, 'segmentation': seg}
+
+		# print(type(img))
+		# print(img[0].size())
+		# print(type(seg))
+		# print(len(seg[0]))
+		# exit()
 
 		return sample 
 

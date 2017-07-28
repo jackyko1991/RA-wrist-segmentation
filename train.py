@@ -11,6 +11,7 @@ import loss
 import numpy as np
 import matplotlib.pyplot as plt
 import timeit
+from torch.autograd import Variable
 
 def parser_init(parser):
 	"""initialize parse arguments"""
@@ -48,21 +49,21 @@ def parser_init(parser):
 	args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 	# change parser value here
-	args.epochs = 80
+	args.epochs = 10
 	args.patch_size = 256
 	args.train_batch_size = 1
 	args.test_batch_size = 1
 	args.lr = 1e-4 
 	args.decay_weight = 2e-5
 	args.momentum = 0.9
-	args.snapshot = '/mnt/disk0/projects/RA_wrist_segmentation/snapshot'
-	args.resume = '/mnt/disk0/projects/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
-	args.data_folder = '/mnt/disk0/projects/RA_wrist_segmentation/data'
+	args.snapshot = '../../snapshot'
+	args.resume = '../../snapshot/snapshot_100.pth.tar'
+	args.data_folder = '../../data'
 	# args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
 	# args.resume = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
 	# args.data_folder = 'J:/Deep_Learning/RA_wrist_segmentation/data'
 	args.drop_ratio = 0.005
-	args.cuda = False
+	# args.cuda = False
 	
 	return args
 
@@ -71,7 +72,8 @@ def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,dr
 
 	data_transform = tvTransform.Compose([transform.RandomCrop(patch_size,drop_ratio), \
 		transform.Normalization(),\
-		transform.SitkToNumpy()])
+		transform.SitkToNumpy(),\
+		transform.NumpyToPIL()])
 
 	img_transform = tvTransform.Compose([tvTransform.ToTensor(),\
 		tvTransform.Normalize([.485, .456, .406], [.229, .224, .225])])
@@ -89,7 +91,7 @@ def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,dr
 
 	return [train_loader,test_loader]
 
-def train(train_loader,epoch,model,optimizer,cuda=True):
+def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 	print('Start epoch {}'.format(epoch))
 	"""train the model"""
 	model.train()
@@ -97,10 +99,13 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 	epoch_loss = 0
 	epoch_accuracy = 0
 
-	tmp_loss = 0
-	tmp_accuracy = 0
+	for batch_idx, data in enumerate(train_loader):
+	# for batch_idx, (images, labels_group) in tqdm.tqdm(enumerate(train_loader)):
+		images = data['image']
+		labels_group = data['segmentation']
 
-	for batch_idx, (images, labels_group) in tqdm.tqdm(enumerate(train_loader)):
+		# print(images[0].size())
+
 		if cuda and torch.cuda.is_available():
 			images = [Variable(image.cuda()) for image in images]
 			labels_group = [labels for labels in labels_group]
@@ -109,16 +114,13 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 			labels_group = [labels for labels in labels_group]
 
 		optimizer.zero_grad()
-
 		losses = []
 		for img, labels in zip(images, labels_group):
 			outputs = model(img)
-
-			print('img',img.size())
-			print('labels',labels[0].size())
-			print('outputs',outputs[0].size())
-
-			labels = [Variable(label.cuda()) for label in labels]
+			if cuda and torch.cuda.is_available():
+				labels = [Variable(label.cuda()) for label in labels]
+			else:
+				labels = [Variable(label) for label in labels]
 			for pair in zip(outputs, labels):
 				losses.append(criterion(pair[0], pair[1]))
 
@@ -131,24 +133,28 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 		for w, l in zip(loss_weight, losses):
 			loss += w*l
 
+		print(loss)
+
 		loss.backward()
 		optimizer.step()
-		running_loss += loss.data[0]
+		epoch_loss += loss.data[0]
 
-        # lr = lr * (1-(92*epoch+i)/max_iters)**0.9
-        # for parameters in optimizer.param_groups:
-        #     parameters['lr'] = lr
+		exit()
 
-	print("Epoch [%d] Loss: %.4f" % (epoch+1, running_loss/i))
-    # ploter.plot("loss", "train", epoch+1, running_loss/i)
-	running_loss = 0
+		# lr = lr * (1-(92*epoch+i)/max_iters)**0.9
+		# for parameters in optimizer.param_groups:
+		#     parameters['lr'] = lr
+	 
+	epoch_loss = epoch_loss/batch_idx
+	print("Epoch [%d] Loss: %.4f" % (epoch+1, epoch_loss))
+	# ploter.plot("loss", "train", epoch+1, running_loss/i)
 
-	if (epoch+1) % 20 == 0:
-		lr /= 10
-		optimizer = torch.optim.SGD(model.parameters(), lr=lr,
-			momentum=momentum,
-			weight_decay=weight_decay)
-        torch.save(model.state_dict(), "./pth/fcn-deconv-%d.pth" % (epoch))
+	snapshot = {'epoch': epoch, \
+			'state_dict': model.state_dict(), \
+			'optimizer': optimizer.state_dict(), \
+			'loss': epoch_loss/(batch_idx+1), \
+			'epoch_end': True}
+	return [epoch_loss/(batch_idx+1), snapshot]
 
 
 
@@ -198,7 +204,6 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 		# 	# torch.save(snapshot, snapshot_folder + '/snapshot_' + str(epoch) + '_' + str(batch_idx+1))
 		# 	return [epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1), snapshot]
 
-
 def main(args):
 	if args.cuda and torch.cuda.is_available():
 		print('CUDA acceleration: Yes')
@@ -215,17 +220,18 @@ def main(args):
 		cudnn.benchmark = True
 
 	# create network model
-	model = FCN(22)
+	model = FCN(3)
+
 	if args.cuda and torch.cuda.is_available():
 		model = torch.nn.DataParallel(model)
 		model.cuda()
 
-	weight = torch.ones(22)
-	weight[21] = 0
+	weight = torch.ones(3)
+	weight[2] = 0
 	# max_iters = 92*epoches
 
 	#load data
-	workers = 30
+	workers = 3
 	[train_loader, test_loader] = load_data(args.data_folder, args.train_batch_size, args.test_batch_size, args.patch_size, workers, 0.05)
 
 	if args.cuda and torch.cuda.is_available():
@@ -303,11 +309,11 @@ def main(args):
 	for epoch in range(1, args.epochs + 1):
 		if epoch >= start_epoch:
 
-			[epoch_train_loss, epoch_train_accuracy, snapshot] = train(train_loader,epoch,model,optimizer,args.cuda)
+			[epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,args.cuda)
 			# [epoch_test_loss,epoch_test_accuracy] = test(test_loader,epoch,model,args.cuda) # test accuracy after when each epoch train ends
 
 			# epoch_train_loss = 0
-			# epoch_train_accuracy = 1
+			epoch_train_accuracy = 1
 			train_loss_record[epoch-1] = epoch_train_loss
 			train_accuracy_record[epoch-1] = epoch_train_accuracy
 
@@ -317,25 +323,25 @@ def main(args):
 			test_accuracy_record[epoch-1] = epoch_test_accuracy
 
 			# update train loss plot
- 			line1.set_ydata(train_loss_record)
- 			line2.set_ydata(train_accuracy_record)
- 			line3.set_ydata(test_loss_record)
- 			line4.set_ydata(test_accuracy_record)
+			line1.set_ydata(train_loss_record)
+			line2.set_ydata(train_accuracy_record)
+			line3.set_ydata(test_loss_record)
+			line4.set_ydata(test_accuracy_record)
 
- 			if epoch == start_epoch:
- 				continue
- 			else:
- 				ax1.set_xlim([start_epoch,epoch])
- 			ax1.set_ylim([0,1.5])
- 			# ax1.set_ylim([0,max(train_loss_record)]) # cannot function well when resume training, going to be fixed
- 			# ax2.set_ylim([0,max(train_accuracy_record)])
- 			ax1.set_title('Epoch: %s \nTrain Loss: %s, Test Accuracy: %s\n Benchmark: %s s/epoch'\
- 				%(epoch, \
- 				"{0:.2f}".format(epoch_train_loss),\
+			if epoch == start_epoch:
+				continue
+			else:
+				ax1.set_xlim([start_epoch,epoch])
+			ax1.set_ylim([0,1.5])
+			# ax1.set_ylim([0,max(train_loss_record)]) # cannot function well when resume training, going to be fixed
+			# ax2.set_ylim([0,max(train_accuracy_record)])
+			ax1.set_title('Epoch: %s \nTrain Loss: %s, Test Accuracy: %s\n Benchmark: %s s/epoch'\
+				%(epoch, \
+				"{0:.2f}".format(epoch_train_loss),\
 				"{0:.2f}".format(epoch_test_accuracy),\
 				"{0:.2f}".format((timeit.default_timer() - timer)/epoch_count)))
- 			plt.draw()
- 			plt.pause(0.000000001)
+			plt.draw()
+			plt.pause(0.000000001)
 
 			epoch_count = epoch_count+1
 

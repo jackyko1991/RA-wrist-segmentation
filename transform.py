@@ -1,5 +1,9 @@
-import SimpleITK
+import SimpleITK as sitk
 from PIL import Image
+import collections
+import numpy as np
+import random
+import torch
 
 class Normalization(object):
 	"""Normalize an image by setting its mean to zero and variance to one."""
@@ -47,6 +51,26 @@ class SitkToNumpy(object):
 		seg_np = np.uint8(seg_np)
 
 		return {'image': img_np, 'segmentation': seg_np}
+
+class NumpyToPIL(object):
+	"""Convert sitk image to numpy arrays, make sure that the image value is normalized between 0 and 1"""
+
+	def __call__(self,sample):
+		img, seg = sample['image'], sample['segmentation']
+
+		img = np.squeeze(img)
+		seg = np.squeeze(seg)
+
+		img = Image.fromarray(np.uint8(img*255))
+
+		# # convert image to 3 channel
+		# img3C = np.zeros((img.size[0],img.size[1],3))
+		# img3C[:,:,0] = img
+		# img3C[:,:,1] = img
+		# img3C[:,:,2] = img
+		seg = Image.fromarray(seg)
+
+		return {'image': img, 'segmentation': seg}
 
 class Padding(object):
 	"""Add padding to the image if size is smaller than patch size
@@ -103,7 +127,7 @@ class RandomCrop(object):
 			self.output_size = (output_size, output_size, 1)
 		else:
 			assert len(output_size) == 2
-			self.output_size = (output_size[0],output_size[0],1)
+			self.output_size = (output_size[0],output_size[1],1)
 
 		assert isinstance(drop_ratio, float)
 		if drop_ratio >=0 and drop_ratio<=1:
@@ -169,11 +193,11 @@ class ReLabel(object):
 
 class ToSP(object):
 	def __init__(self, size):
-		self.scale2 = Scale(size/2, Image.NEAREST)
-		self.scale4 = Scale(size/4, Image.NEAREST)
-		self.scale8 = Scale(size/8, Image.NEAREST)
-		self.scale16 = Scale(size/16, Image.NEAREST)
-		self.scale32 = Scale(size/32, Image.NEAREST)
+		self.scale2 = Scale(int(size/2), Image.NEAREST)
+		self.scale4 = Scale(int(size/4), Image.NEAREST)
+		self.scale8 = Scale(int(size/8), Image.NEAREST)
+		self.scale16 = Scale(int(size/16), Image.NEAREST)
+		self.scale32 = Scale(int(size/32), Image.NEAREST)
 
 	def __call__(self, input):
 		input2 = self.scale2(input)
