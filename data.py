@@ -1,10 +1,12 @@
 import SimpleITK as sitk
 import torch
+import os
 
 class NiftiDataSet(torch.utils.data.Dataset):
-	"""use train mode to load image label pair, else only load image. Train mode is also useful in testing phase"""
+	"""use train mode to load image label pair, else only load image. Train mode is also useful in testing phase.
+	transform is a general transform apply to both image and label, pririor to img and label transform"""
 
-	def __init__(self, data_folder, transform=None, train=False):
+	def __init__(self, data_folder, transform=None, train=False, img_transform=None, label_transform=None):
 		self.data_folder = data_folder
 		self.transform = transform
 		self.dirlist = os.listdir(data_folder)
@@ -49,6 +51,14 @@ class NiftiDataSet(torch.utils.data.Dataset):
 		# apply transform to the data if necessary
 		if self.transform:
 			sample = self.transform(sample)
+
+		if self.img_transform:
+			img = self.transform(img)
+
+		if self.label_transform:
+			seg = self.transform(seg)
+
+		sample = {'image':img, 'segmentation': seg}
 
 		return sample 
 

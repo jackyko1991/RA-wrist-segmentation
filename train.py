@@ -6,6 +6,11 @@ from torch.backends import cudnn
 import torch
 from upsample import FCN
 import tqdm
+import os
+import loss
+import numpy as np
+import matplotlib.pyplot as plt
+import timeit
 
 def parser_init(parser):
 	"""initialize parse arguments"""
@@ -50,36 +55,36 @@ def parser_init(parser):
 	args.lr = 1e-4 
 	args.decay_weight = 2e-5
 	args.momentum = 0.9
-	args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
-	args.resume = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
-	args.data_folder = 'J:/Deep_Learning/RA_wrist_segmentation/data'
+	args.snapshot = '/mnt/disk0/projects/RA_wrist_segmentation/snapshot'
+	args.resume = '/mnt/disk0/projects/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
+	args.data_folder = '/mnt/disk0/projects/RA_wrist_segmentation/data'
+	# args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
+	# args.resume = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
+	# args.data_folder = 'J:/Deep_Learning/RA_wrist_segmentation/data'
 	args.drop_ratio = 0.005
+	args.cuda = False
 	
 	return args
 
 def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,drop_ratio=0.1):
 	# apply transform to input data, support multithreaded reading, num_workers=0 refers to use main thread
-	# transform = transforms.Compose([NDM.Normalization(),\
-	# 	NDM.Padding(patch_size),\
-	# 	NDM.RandomCrop(patch_size,drop_ratio),\
-	# 	NDM.SitkToTensor()])
 
-	data_transform = transform.Compose([transform.RandomCrop(patch_size,drop_ratio), \
+	data_transform = tvTransform.Compose([transform.RandomCrop(patch_size,drop_ratio), \
 		transform.Normalization(),\
 		transform.SitkToNumpy()])
 
-	img_transform = Compose([tvTransform.ToTensor(),\
+	img_transform = tvTransform.Compose([tvTransform.ToTensor(),\
 		tvTransform.Normalize([.485, .456, .406], [.229, .224, .225])])
 
-	seg_transform = Compose([transform.ToSP(256), \
+	seg_transform = tvTransform.Compose([transform.ToSP(256), \
 		transform.ToLabel(), \
 		transform.ReLabel(255, 3)])
 
 	# load data
-	train_set = NDM.NifitDataSet(os.path.join(data_path,'train'),transform=data_transform,img_transform=img_transform,label_transform=seg_transform,train=True)
+	train_set = data.NiftiDataSet(os.path.join(data_path,'train'),transform=data_transform,img_transform=img_transform,label_transform=seg_transform,train=True)
 	train_loader = torch.utils.data.DataLoader(train_set, batch_size=train_batch_size,shuffle=True,num_workers=workers,pin_memory=True)
 
-	test_set = NDM.NifitDataSet(os.path.join(data_path,'test'),transform=data_transform,img_transform=img_transform,label_transform=seg_transform,train=True)
+	test_set = data.NiftiDataSet(os.path.join(data_path,'test'),transform=data_transform,img_transform=img_transform,label_transform=seg_transform,train=True)
 	test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_batch_size,shuffle=True,num_workers=workers,pin_memory=True)
 
 	return [train_loader,test_loader]
@@ -95,7 +100,7 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 	tmp_loss = 0
 	tmp_accuracy = 0
 
-	for batch_idx, (images, labels_group) in tqdm.tqdm(enumerate(trainloader)):
+	for batch_idx, (images, labels_group) in tqdm.tqdm(enumerate(train_loader)):
 		if cuda and torch.cuda.is_available():
 			images = [Variable(image.cuda()) for image in images]
 			labels_group = [labels for labels in labels_group]
@@ -108,6 +113,11 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 		losses = []
 		for img, labels in zip(images, labels_group):
 			outputs = model(img)
+
+			print('img',img.size())
+			print('labels',labels[0].size())
+			print('outputs',outputs[0].size())
+
 			labels = [Variable(label.cuda()) for label in labels]
 			for pair in zip(outputs, labels):
 				losses.append(criterion(pair[0], pair[1]))
@@ -176,17 +186,17 @@ def train(train_loader,epoch,model,optimizer,cuda=True):
 
 
 
-		if (batch_idx+1) == len(train_loader):
-			print('Training of epoch {} finished. Average Training Loss/Accuracy: {:.6f}/{:.6f}'.format(
-				epoch, epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1)))
-			snapshot = {'epoch': epoch, \
-			'state_dict': model.state_dict(), \
-			'optimizer': optimizer.state_dict(), \
-			'loss': epoch_loss/(batch_idx+1), \
-			'accuracy': epoch_accuracy/(batch_idx+1), \
-			'epoch_end': True}
-			# torch.save(snapshot, snapshot_folder + '/snapshot_' + str(epoch) + '_' + str(batch_idx+1))
-			return [epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1), snapshot]
+		# if (batch_idx+1) == len(train_loader):
+		# 	print('Training of epoch {} finished. Average Training Loss/Accuracy: {:.6f}/{:.6f}'.format(
+		# 		epoch, epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1)))
+		# 	snapshot = {'epoch': epoch, \
+		# 	'state_dict': model.state_dict(), \
+		# 	'optimizer': optimizer.state_dict(), \
+		# 	'loss': epoch_loss/(batch_idx+1), \
+		# 	'accuracy': epoch_accuracy/(batch_idx+1), \
+		# 	'epoch_end': True}
+		# 	# torch.save(snapshot, snapshot_folder + '/snapshot_' + str(epoch) + '_' + str(batch_idx+1))
+		# 	return [epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1), snapshot]
 
 
 def main(args):
@@ -205,8 +215,9 @@ def main(args):
 		cudnn.benchmark = True
 
 	# create network model
-	model = torch.nn.DataParallel(FCN(22))
+	model = FCN(22)
 	if args.cuda and torch.cuda.is_available():
+		model = torch.nn.DataParallel(model)
 		model.cuda()
 
 	weight = torch.ones(22)
@@ -219,7 +230,7 @@ def main(args):
 
 	if args.cuda and torch.cuda.is_available():
 		weight = weight.cuda()
-	criterion = CrossEntropyLoss2d(weight)
+	criterion = loss.CrossEntropyLoss2d(weight)
 	optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,weight_decay=args.decay_weight)
 
 	# create snapshot folder
@@ -256,7 +267,7 @@ def main(args):
 	test_loss_record[:] = np.NAN
 	test_accuracy_record[:] = np.NAN
 
-	if args.resume:
+	if os.path.isfile(args.resume):
 		train_loss_record = snapshot['train_loss'] 
 		train_accuracy_record = snapshot['train_accuracy']
 		test_loss_record = snapshot['test_loss']
