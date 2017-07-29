@@ -104,7 +104,16 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		images = data['image']
 		labels_group = data['segmentation']
 
+		# print("images")
+		# print(type(images[0]))
 		# print(images[0].size())
+		# print("labels_group")
+		# print(type(labels_group[0]))
+		# for i in range(len(labels_group[0])):
+		# 	print(type(labels_group[0][i]))
+		# 	print(labels_group[0][i].size())
+		# exit()
+		print("a")
 
 		if cuda and torch.cuda.is_available():
 			images = [Variable(image.cuda()) for image in images]
@@ -113,16 +122,37 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 			images = [Variable(image) for image in images]
 			labels_group = [labels for labels in labels_group]
 
+		print("b")
+
 		optimizer.zero_grad()
 		losses = []
 		for img, labels in zip(images, labels_group):
+
+			# if img.size()[1] == 1:
+			# 	img_3C = torch.FloatTensor(img.size()[0], 3, img.size()[2],img.size()[3]).zero_()
+			# 	if cuda and torch.cuda.is_available():
+			# 		img_3C = img_3C.cuda()
+
+			# 	img_3C[:,0,:,:] = img.data
+			# 	img_3C[:,1,:,:] = img.data
+			# 	img_3C[:,2,:,:] = img.data
+			# 	img_3C = Variable(img_3C)
+			# 	img = img_3C
+
+			# print(img.size())
+			# print(type(img.data))
+			print('forward')
 			outputs = model(img)
+			
+			print("c")
 			if cuda and torch.cuda.is_available():
 				labels = [Variable(label.cuda()) for label in labels]
 			else:
 				labels = [Variable(label) for label in labels]
 			for pair in zip(outputs, labels):
 				losses.append(criterion(pair[0], pair[1]))
+
+			print("d")
 
 		if epoch < 40:
 			loss_weight = [0.1, 0.1, 0.1, 0.1, 0.1, 0.5]
@@ -133,13 +163,14 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		for w, l in zip(loss_weight, losses):
 			loss += w*l
 
-		print(loss)
-
+		print('backward')
 		loss.backward()
-		optimizer.step()
-		epoch_loss += loss.data[0]
 
 		exit()
+		optimizer.step()
+		epoch_loss += loss_0.data[0]
+
+		
 
 		# lr = lr * (1-(92*epoch+i)/max_iters)**0.9
 		# for parameters in optimizer.param_groups:
@@ -228,10 +259,12 @@ def main(args):
 
 	weight = torch.ones(3)
 	weight[2] = 0
+	# weight = torch.ones(22)
+	# weight[21] = 0
 	# max_iters = 92*epoches
 
 	#load data
-	workers = 3
+	workers = 1
 	[train_loader, test_loader] = load_data(args.data_folder, args.train_batch_size, args.test_batch_size, args.patch_size, workers, 0.05)
 
 	if args.cuda and torch.cuda.is_available():
