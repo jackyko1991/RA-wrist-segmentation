@@ -2,7 +2,7 @@ import transform
 import torchvision.transforms as tvTransform
 import data
 import argparse
-from torch.backends import cudnn
+# from torch.backends import cudnn
 import torch
 from upsample import FCN
 import tqdm
@@ -49,19 +49,20 @@ def parser_init(parser):
 	args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 	# change parser value here
-	args.epochs = 10
+	args.epochs = 100
 	args.patch_size = 256
-	args.train_batch_size = 1
+	args.train_batch_size = 5
 	args.test_batch_size = 1
 	args.lr = 1e-4 
 	args.decay_weight = 2e-5
 	args.momentum = 0.9
 	args.snapshot = '../../snapshot'
-	args.resume = '../../snapshot/snapshot_100.pth.tar'
+	args.resume = '../../snapshot/snapshot_50.pth.tar'
 	args.data_folder = '../../data'
 	# args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
 	# args.resume = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
 	# args.data_folder = 'J:/Deep_Learning/RA_wrist_segmentation/data'
+	args.log_interval = 10
 	args.drop_ratio = 0.005
 	# args.cuda = False
 	
@@ -75,8 +76,9 @@ def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,dr
 		transform.SitkToNumpy(),\
 		transform.NumpyToPIL()])
 
-	img_transform = tvTransform.Compose([tvTransform.ToTensor(),\
-		tvTransform.Normalize([.485, .456, .406], [.229, .224, .225])])
+	# img_transform = tvTransform.Compose([tvTransform.ToTensor(),\
+		# tvTransform.Normalize([.485, .456, .406], [.229, .224, .225])])
+	img_transform = tvTransform.Compose([tvTransform.ToTensor()])
 
 	seg_transform = tvTransform.Compose([transform.ToSP(256), \
 		transform.ToLabel(), \
@@ -113,7 +115,6 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		# 	print(type(labels_group[0][i]))
 		# 	print(labels_group[0][i].size())
 		# exit()
-		print("a")
 
 		if cuda and torch.cuda.is_available():
 			images = [Variable(image.cuda()) for image in images]
@@ -121,8 +122,6 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		else:
 			images = [Variable(image) for image in images]
 			labels_group = [labels for labels in labels_group]
-
-		print("b")
 
 		optimizer.zero_grad()
 		losses = []
@@ -139,12 +138,8 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 			# 	img_3C = Variable(img_3C)
 			# 	img = img_3C
 
-			# print(img.size())
-			# print(type(img.data))
-			print('forward')
 			outputs = model(img)
 			
-			print("c")
 			if cuda and torch.cuda.is_available():
 				labels = [Variable(label.cuda()) for label in labels]
 			else:
@@ -152,7 +147,19 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 			for pair in zip(outputs, labels):
 				losses.append(criterion(pair[0], pair[1]))
 
-			print("d")
+			# plt.ion()
+			# plt.subplot(1,3,1)
+			# plt.imshow(images[0].data.cpu().numpy()[0, 0,:,:],cmap='gray')
+			# plt.subplot(1,3,2)
+			# plt.imshow(labels[0].data.cpu().numpy()[0,:,:],cmap='jet')
+			# plt.subplot(1,3,3)
+			# plt.imshow(outputs[0].data.max(0)[1].cpu().numpy()[0,0,:,:],cmap='jet')
+
+			# plt.draw()
+			# plt.pause(0.001)
+
+			# exit()
+
 
 		if epoch < 40:
 			loss_weight = [0.1, 0.1, 0.1, 0.1, 0.1, 0.5]
@@ -163,21 +170,17 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		for w, l in zip(loss_weight, losses):
 			loss += w*l
 
-		print('backward')
 		loss.backward()
 
-		exit()
 		optimizer.step()
-		epoch_loss += loss_0.data[0]
-
-		
+		epoch_loss += loss.data[0]
 
 		# lr = lr * (1-(92*epoch+i)/max_iters)**0.9
 		# for parameters in optimizer.param_groups:
 		#     parameters['lr'] = lr
 	 
 	epoch_loss = epoch_loss/batch_idx
-	print("Epoch [%d] Loss: %.4f" % (epoch+1, epoch_loss))
+	print("Epoch %d, Loss: %.4f" % (epoch+1, epoch_loss))
 	# ploter.plot("loss", "train", epoch+1, running_loss/i)
 
 	snapshot = {'epoch': epoch, \
@@ -185,7 +188,8 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 			'optimizer': optimizer.state_dict(), \
 			'loss': epoch_loss/(batch_idx+1), \
 			'epoch_end': True}
-	return [epoch_loss/(batch_idx+1), snapshot]
+
+	return [epoch_loss, snapshot]
 
 
 
@@ -235,10 +239,88 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		# 	# torch.save(snapshot, snapshot_folder + '/snapshot_' + str(epoch) + '_' + str(batch_idx+1))
 		# 	return [epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1), snapshot]
 
+def test(test_loader,epoch,model,cuda=True):
+	"""test accuracy of the training model"""
+	model.eval()
+
+	test_loss = 0
+	test_accuracy = 0
+
+	for batch_idx, data in enumerate(test_loader):
+		# get the inputs
+		img = data['image']
+		label = data['segmentation']
+		
+		if cuda and torch.cuda.is_available():
+			img, label = img.cuda(), label.cuda()
+
+		img = Variable(img).unsqueeze(0)
+
+		print(img.size())
+		exit()
+
+		outputs = model(img)
+
+
+		# img = Image.open("./data/VOC2012test/JPEGImages/2008_000101.jpg").convert("RGB")
+		# original_size = img.size
+		# img.save("original.png")
+		# img = img.resize((256, 256), Image.BILINEAR)
+		# img = ToTensor()(img)
+		# img = Variable(img).unsqueeze(0)
+		# outputs = model(img)
+		# # 22 256 256
+		# for i, output in enumerate(outputs):
+		#     output = output[0].data.max(0)[1]
+		#     output = Colorize()(output)
+		#     output = np.transpose(output.numpy(), (1, 2, 0))
+		#     img = Image.fromarray(output, "RGB")
+		#     if i == 0:
+		#         img = img.resize(original_size, Image.NEAREST)
+		#     img.save("test-%d.png" % i)
+
+
+		# wrap them in Variable
+		img, label = Variable(img), Variable(label) # convert tensor into variable
+		
+		output = model(img)
+		label = label.view(label.numel())
+		# loss = F.nll_loss(output, label)
+
+		# # compute average loss
+		# test_loss = test_loss + loss.data[0]
+
+		# compute average accuracy
+		pred = output[0].data.max(1)[1]  # get the index of the max log-probability
+		incorrect = pred.ne(label.data).sum()
+
+		test_accuracy = test_accuracy + 1.0 - float(incorrect) / label.numel()
+		# print('test-accuracy:{}'.format(test_accuracy/(batch_idx+1)))
+
+		# plt.ion()
+		# plt.subplot(1,3,1)
+		# plt.imshow(img.data.cpu().numpy()[0, 0,:,:,32])
+		# plt.subplot(1,3,2)
+		# plt.imshow(label.view(img[0, 0].data.size()).data.cpu().numpy()[:,:,32])
+		# plt.subplot(1,3,3)
+		# plt.imshow(pred.view(img[0, 0].size()).cpu().numpy()[:,:,32])
+		# print('label size {}/{}'.format(label.data.sum(),pred.sum()))
+		# plt.draw()
+
+	test_loss = test_loss/(batch_idx+1)
+	test_accuracy = test_accuracy/(batch_idx+1)
+
+	print('Testing of epoch {} finished. Average Testing Accuracy: {:.6f}/{:.6f}'.format(
+		epoch, test_accuracy))
+
+	return test_accuracy
+
 def main(args):
 	if args.cuda and torch.cuda.is_available():
 		print('CUDA acceleration: Yes')
 	else:
+		if not torch.cuda.is_available():
+			print('CUDA device not found')
 		print('CUDA acceleration: No')
 
 	# manual random seed
@@ -246,21 +328,22 @@ def main(args):
 	if args.cuda and torch.cuda.is_available():
 		torch.cuda.manual_seed(args.seed)
 
-	# cudnn benchmark
-	if torch.cuda.is_available():
-		cudnn.benchmark = True
+	# # cudnn benchmark
+	# if torch.cuda.is_available():
+	# 	# cudnn.benchmark = True
+	# 	cudnn.benchmark = False # don't use CUDNN if GPU memeory is insufficient
 
 	# create network model
-	model = FCN(3)
+	model = FCN(22)
 
 	if args.cuda and torch.cuda.is_available():
 		model = torch.nn.DataParallel(model)
 		model.cuda()
 
-	weight = torch.ones(3)
-	weight[2] = 0
-	# weight = torch.ones(22)
-	# weight[21] = 0
+	# weight = torch.ones(4)
+	# weight[3] = 0
+	weight = torch.ones(22)
+	weight[21] = 0
 	# max_iters = 92*epoches
 
 	#load data
@@ -322,7 +405,7 @@ def main(args):
 	ax2.set_ylabel('Accuracy')
 	ax1.set_title('Epoch: 0, Train Loss: 0, Test Accuracy: 0, Benchmark: 0 s/epoch')
 	ax1.set_xlim([1,2])
-	ax1.set_ylim([0,1])
+	ax1.set_ylim([0,2.5])
 	ax2.set_ylim([0,1])
 	line1, = ax1.plot(range(1,args.epochs+1), train_loss_record, 'k-',label='Train Loss')
 	line2, = ax2.plot(range(1,args.epochs+1), train_accuracy_record, 'r-',label='Train Accuracy')
@@ -342,8 +425,8 @@ def main(args):
 	for epoch in range(1, args.epochs + 1):
 		if epoch >= start_epoch:
 
-			[epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,args.cuda)
-			# [epoch_test_loss,epoch_test_accuracy] = test(test_loader,epoch,model,args.cuda) # test accuracy after when each epoch train ends
+			# [epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,args.cuda)
+			[epoch_test_accuracy] = test(test_loader,epoch,model,args.cuda) # test accuracy after when each epoch train ends
 
 			# epoch_train_loss = 0
 			epoch_train_accuracy = 1
@@ -357,15 +440,15 @@ def main(args):
 
 			# update train loss plot
 			line1.set_ydata(train_loss_record)
-			line2.set_ydata(train_accuracy_record)
-			line3.set_ydata(test_loss_record)
+			# line2.set_ydata(train_accuracy_record)
+			# line3.set_ydata(test_loss_record)
 			line4.set_ydata(test_accuracy_record)
 
 			if epoch == start_epoch:
 				continue
 			else:
 				ax1.set_xlim([start_epoch,epoch])
-			ax1.set_ylim([0,1.5])
+			ax1.set_ylim([0,2.5])
 			# ax1.set_ylim([0,max(train_loss_record)]) # cannot function well when resume training, going to be fixed
 			# ax2.set_ylim([0,max(train_accuracy_record)])
 			ax1.set_title('Epoch: %s \nTrain Loss: %s, Test Accuracy: %s\n Benchmark: %s s/epoch'\

@@ -61,6 +61,14 @@ class NumpyToPIL(object):
 		img = np.squeeze(img)
 		seg = np.squeeze(seg)
 
+		# img = Image.fromarray(np.uint8(img*255))
+		#print("---------")
+		#print np.amin(img)
+		#print np.amax(img) 
+
+		img = (img - np.amin(img))/(np.amax(img)-np.amin(img))
+		#print np.amin(img)
+		#print np.amax(img) 
 		img = Image.fromarray(np.uint8(img*255))
 
 		# # convert image to 3 channel
