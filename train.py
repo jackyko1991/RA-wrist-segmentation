@@ -2,7 +2,7 @@ import transform
 import torchvision.transforms as tvTransform
 import data
 import argparse
-# from torch.backends import cudnn
+from torch.backends import cudnn
 import torch
 from upsample import FCN
 import tqdm
@@ -12,6 +12,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import timeit
 from torch.autograd import Variable
+import scipy
+from  scipy import ndimage
 
 def parser_init(parser):
 	"""initialize parse arguments"""
@@ -49,20 +51,20 @@ def parser_init(parser):
 	args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 	# change parser value here
-	args.epochs = 100
+	args.epochs = 2000
 	args.patch_size = 256
-	args.train_batch_size = 5
+	args.train_batch_size = 64
 	args.test_batch_size = 1
 	args.lr = 1e-4 
 	args.decay_weight = 2e-5
 	args.momentum = 0.9
-	args.snapshot = '../../snapshot'
-	args.resume = '../../snapshot/snapshot_50.pth.tar'
+	args.snapshot = '../../snapshot-50'
+	args.resume = '../../snapshot-50/snapshot_200.pth.tar'
 	args.data_folder = '../../data'
 	# args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
 	# args.resume = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot/snapshot_100.pth.tar'
 	# args.data_folder = 'J:/Deep_Learning/RA_wrist_segmentation/data'
-	args.log_interval = 10
+	args.log_interval = 50
 	args.drop_ratio = 0.005
 	# args.cuda = False
 	
@@ -80,9 +82,11 @@ def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,dr
 		# tvTransform.Normalize([.485, .456, .406], [.229, .224, .225])])
 	img_transform = tvTransform.Compose([tvTransform.ToTensor()])
 
+	# seg_transform = tvTransform.Compose([transform.ToSP(256), \
+	# 	transform.ToLabel(), \
+	# 	transform.ReLabel(255, 3)])
 	seg_transform = tvTransform.Compose([transform.ToSP(256), \
-		transform.ToLabel(), \
-		transform.ReLabel(255, 3)])
+		transform.ToLabel()])
 
 	# load data
 	train_set = data.NiftiDataSet(os.path.join(data_path,'train'),transform=data_transform,img_transform=img_transform,label_transform=seg_transform,train=True)
@@ -93,7 +97,22 @@ def load_data(data_path,train_batch_size,test_batch_size,patch_size,workers=0,dr
 
 	return [train_loader,test_loader]
 
-def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
+def dice(im1,im2):
+	im1 = np.asarray(im1).astype(np.bool)
+	im2 = np.asarray(im2).astype(np.bool)
+
+	if im1.shape != im2.shape:
+		raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
+
+	# Compute Dice coefficient
+	intersection = np.logical_and(im1, im2)
+
+	if im1.sum() + im2.sum() == 0:
+		return 1
+
+	return 2. * intersection.sum() / (im1.sum() + im2.sum())
+
+def train(train_loader,epoch,model,optimizer,criterion,weight,cuda=True):
 	print('Start epoch {}'.format(epoch))
 	"""train the model"""
 	model.train()
@@ -106,16 +125,6 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		images = data['image']
 		labels_group = data['segmentation']
 
-		# print("images")
-		# print(type(images[0]))
-		# print(images[0].size())
-		# print("labels_group")
-		# print(type(labels_group[0]))
-		# for i in range(len(labels_group[0])):
-		# 	print(type(labels_group[0][i]))
-		# 	print(labels_group[0][i].size())
-		# exit()
-
 		if cuda and torch.cuda.is_available():
 			images = [Variable(image.cuda()) for image in images]
 			labels_group = [labels for labels in labels_group]
@@ -126,18 +135,6 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		optimizer.zero_grad()
 		losses = []
 		for img, labels in zip(images, labels_group):
-
-			# if img.size()[1] == 1:
-			# 	img_3C = torch.FloatTensor(img.size()[0], 3, img.size()[2],img.size()[3]).zero_()
-			# 	if cuda and torch.cuda.is_available():
-			# 		img_3C = img_3C.cuda()
-
-			# 	img_3C[:,0,:,:] = img.data
-			# 	img_3C[:,1,:,:] = img.data
-			# 	img_3C[:,2,:,:] = img.data
-			# 	img_3C = Variable(img_3C)
-			# 	img = img_3C
-
 			outputs = model(img)
 			
 			if cuda and torch.cuda.is_available():
@@ -160,11 +157,10 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 
 			# exit()
 
+		loss_weight = weight
 
-		if epoch < 40:
-			loss_weight = [0.1, 0.1, 0.1, 0.1, 0.1, 0.5]
-		else:
-			loss_weight = [0.5, 0.1, 0.1, 0.1, 0.1, 0.1]
+		# print loss_weight
+		# print losses
 
 		loss = 0
 		for w, l in zip(loss_weight, losses):
@@ -180,8 +176,7 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		#     parameters['lr'] = lr
 	 
 	epoch_loss = epoch_loss/batch_idx
-	print("Epoch %d, Loss: %.4f" % (epoch+1, epoch_loss))
-	# ploter.plot("loss", "train", epoch+1, running_loss/i)
+	print("Testing of epoch {} finished. Average Training Loss: {:.6f}".format(epoch, epoch_loss))
 
 	snapshot = {'epoch': epoch, \
 			'state_dict': model.state_dict(), \
@@ -239,7 +234,7 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 		# 	# torch.save(snapshot, snapshot_folder + '/snapshot_' + str(epoch) + '_' + str(batch_idx+1))
 		# 	return [epoch_loss/(batch_idx+1), epoch_accuracy/(batch_idx+1), snapshot]
 
-def test(test_loader,epoch,model,cuda=True):
+def test(test_loader,epoch,model,weight,cuda=True):
 	"""test accuracy of the training model"""
 	model.eval()
 
@@ -248,69 +243,61 @@ def test(test_loader,epoch,model,cuda=True):
 
 	for batch_idx, data in enumerate(test_loader):
 		# get the inputs
-		img = data['image']
-		label = data['segmentation']
-		
+		images = data['image']
+		labels_group = data['segmentation']
+
 		if cuda and torch.cuda.is_available():
-			img, label = img.cuda(), label.cuda()
+			images = [Variable(image.cuda()) for image in images]
+			labels_group = [labels for labels in labels_group]
+		else:
+			images = [Variable(image) for image in images]
+			labels_group = [labels for labels in labels_group]
 
-		img = Variable(img).unsqueeze(0)
+		for img, labels in zip(images, labels_group):
+			outputs = model(img)
+			
+			if cuda and torch.cuda.is_available():
+				labels = [Variable(label.cuda()) for label in labels]
+			else:
+				labels = [Variable(label) for label in labels]
 
-		print(img.size())
-		exit()
+		accuracy = 0
+		for i in range(6):
+			accuracy = accuracy + dice(labels[i].data.cpu().numpy()[0,:,:],outputs[i].data.max(1)[1].cpu().numpy()[0,0,:,:])*weight[i]
 
-		outputs = model(img)
+		# plot the inference result
+		if accuracy > 0.5:
+			fig1 = plt.figure(1)
+			plt.ion()
+			plt.subplot(1,3,1)
+			plt.imshow(images[0].data.cpu().numpy()[0, 0,:,:],cmap='gray')
+			plt.axis('off')
 
+			plt.subplot(1,3,2)
+			plt.axis('off')
+			plt.imshow(labels[0].data.cpu().numpy()[0,:,:],cmap='jet')
 
-		# img = Image.open("./data/VOC2012test/JPEGImages/2008_000101.jpg").convert("RGB")
-		# original_size = img.size
-		# img.save("original.png")
-		# img = img.resize((256, 256), Image.BILINEAR)
-		# img = ToTensor()(img)
-		# img = Variable(img).unsqueeze(0)
-		# outputs = model(img)
-		# # 22 256 256
-		# for i, output in enumerate(outputs):
-		#     output = output[0].data.max(0)[1]
-		#     output = Colorize()(output)
-		#     output = np.transpose(output.numpy(), (1, 2, 0))
-		#     img = Image.fromarray(output, "RGB")
-		#     if i == 0:
-		#         img = img.resize(original_size, Image.NEAREST)
-		#     img.save("test-%d.png" % i)
+			output_np = np.zeros((outputs[0].data.max(1)[1].cpu().numpy().shape[2],outputs[0].data.max(1)[1].cpu().numpy().shape[3]))
+			for i in range(6):
+				output_tmp = outputs[i].data.max(1)[1].cpu().numpy()[0,0,:,:]
+				output_np = scipy.ndimage.interpolation.zoom(output_tmp,pow(2,i))*weight[i] + output_np
 
+			plt.subplot(1,3,3)
+			output_np = np.round(output_np)
 
-		# wrap them in Variable
-		img, label = Variable(img), Variable(label) # convert tensor into variable
+			# plt.imshow(outputs[0].data.max(1)[1].cpu().numpy()[0,0,:,:],cmap='jet')
+			plt.imshow(output_np,cmap='jet')
+			plt.axis('off')
+
+			plt.draw()
+			plt.pause(0.00000001)
 		
-		output = model(img)
-		label = label.view(label.numel())
-		# loss = F.nll_loss(output, label)
+		test_accuracy = test_accuracy + accuracy
 
-		# # compute average loss
-		# test_loss = test_loss + loss.data[0]
-
-		# compute average accuracy
-		pred = output[0].data.max(1)[1]  # get the index of the max log-probability
-		incorrect = pred.ne(label.data).sum()
-
-		test_accuracy = test_accuracy + 1.0 - float(incorrect) / label.numel()
-		# print('test-accuracy:{}'.format(test_accuracy/(batch_idx+1)))
-
-		# plt.ion()
-		# plt.subplot(1,3,1)
-		# plt.imshow(img.data.cpu().numpy()[0, 0,:,:,32])
-		# plt.subplot(1,3,2)
-		# plt.imshow(label.view(img[0, 0].data.size()).data.cpu().numpy()[:,:,32])
-		# plt.subplot(1,3,3)
-		# plt.imshow(pred.view(img[0, 0].size()).cpu().numpy()[:,:,32])
-		# print('label size {}/{}'.format(label.data.sum(),pred.sum()))
-		# plt.draw()
-
-	test_loss = test_loss/(batch_idx+1)
+	# compute average accuracy
 	test_accuracy = test_accuracy/(batch_idx+1)
 
-	print('Testing of epoch {} finished. Average Testing Accuracy: {:.6f}/{:.6f}'.format(
+	print('Testing of epoch {} finished. Average Testing Accuracy: {:.6f}'.format(
 		epoch, test_accuracy))
 
 	return test_accuracy
@@ -328,22 +315,26 @@ def main(args):
 	if args.cuda and torch.cuda.is_available():
 		torch.cuda.manual_seed(args.seed)
 
-	# # cudnn benchmark
-	# if torch.cuda.is_available():
-	# 	# cudnn.benchmark = True
+	# cudnn benchmark
+	if torch.cuda.is_available():
+		cudnn.benchmark = True
 	# 	cudnn.benchmark = False # don't use CUDNN if GPU memeory is insufficient
 
 	# create network model
-	model = FCN(22)
+	classes = 5
+
+	model = FCN(classes) # 3 classes
 
 	if args.cuda and torch.cuda.is_available():
 		model = torch.nn.DataParallel(model)
 		model.cuda()
 
-	# weight = torch.ones(4)
-	# weight[3] = 0
-	weight = torch.ones(22)
-	weight[21] = 0
+	weight = torch.ones(classes) # 3 classses
+	# weight[classes-1] = 0
+	# weight[classes-2] = 0
+
+	# weight = torch.ones(22)
+	# weight[21] = 0
 	# max_iters = 92*epoches
 
 	#load data
@@ -381,41 +372,34 @@ def main(args):
 
 	# initialize values for plotting
 	train_loss_record = np.zeros(args.epochs)
-	train_accuracy_record = np.empty(args.epochs)
 	train_loss_record[:] = np.NAN
-	train_accuracy_record[:] = np.NAN
-	test_loss_record = np.zeros(args.epochs)
 	test_accuracy_record = np.empty(args.epochs)
-	test_loss_record[:] = np.NAN
 	test_accuracy_record[:] = np.NAN
 
 	if os.path.isfile(args.resume):
-		train_loss_record = snapshot['train_loss'] 
-		train_accuracy_record = snapshot['train_accuracy']
-		test_loss_record = snapshot['test_loss']
-		test_accuracy = snapshot['test_accuracy'] 
+		train_loss_record[0:start_epoch-1] = snapshot['train_loss'][0:start_epoch-1]
+		test_accuracy_record[0:start_epoch-1] = snapshot['test_accuracy'][0:start_epoch-1]
 
 	# plot loss and accuracy
+	fig0 = plt.figure(0)
 	plt.ion()
-
-	fig,ax1 = plt.subplots()
+	ax1 = fig0.add_subplot(1, 1, 1)
+	# fig, ax1 = plt.subplots()
 	ax2 = ax1.twinx()
 	ax1.set_xlabel('Epoch')
 	ax1.set_ylabel('Loss')
 	ax2.set_ylabel('Accuracy')
 	ax1.set_title('Epoch: 0, Train Loss: 0, Test Accuracy: 0, Benchmark: 0 s/epoch')
-	ax1.set_xlim([1,2])
+	ax1.set_xlim([1,start_epoch])
 	ax1.set_ylim([0,2.5])
 	ax2.set_ylim([0,1])
 	line1, = ax1.plot(range(1,args.epochs+1), train_loss_record, 'k-',label='Train Loss')
-	line2, = ax2.plot(range(1,args.epochs+1), train_accuracy_record, 'r-',label='Train Accuracy')
-	line3, = ax1.plot(range(1,args.epochs+1), test_loss_record, 'g-',label='Test Loss')
 	line4, = ax2.plot(range(1,args.epochs+1), test_accuracy_record, 'b-', label='Test Accuracy')
 
 	#legend
 	handles, labels = ax1.get_legend_handles_labels()
-	plt.legend([line1, line2, line3, line4], \
-		['Train Loss', 'Train Accuracy', 'Test Loss', 'Test Accuracy'],loc=2)
+	plt.legend([line1, line4], \
+		['Train Loss', 'Test Accuracy'],loc=2)
 	plt.draw()
 
 	# timer for benchmarking
@@ -424,32 +408,47 @@ def main(args):
 
 	for epoch in range(1, args.epochs + 1):
 		if epoch >= start_epoch:
+			# outputs is a multiresolution weighted
+			if epoch < 50:
+				weight_res = [0.1, 0.1, 0.1, 0.1, 0.1, 0.5]
+			if epoch < 100 and epoch >= 50:
+				weight_res = [0.1, 0.1, 0.1, 0.1, 0.5, 0.1]
+			if epoch < 150 and epoch >= 100:
+				weight_res = [0.1, 0.1, 0.1, 0.5, 0.1, 0.1]
+			if epoch < 200 and epoch >= 150:
+				weight_res = [0.1, 0.1, 0.5, 0.1, 0.1, 0.1]
+			if epoch < 250 and epoch >= 200:
+				weight_res = [0.1, 0.5, 0.1, 0.1, 0.1, 0.1]
+			if epoch < 300 and epoch >= 250:
+				weight_res = [0.2, 0.4, 0.1, 0.1, 0.1, 0.1]
+			if epoch < 350 and epoch >= 300:
+				weight_res = [0.3, 0.3, 0.1, 0.1, 0.1, 0.1]
+			if epoch < 400 and epoch >= 350:
+				weight_res = [0.4, 0.2, 0.1, 0.1, 0.1, 0.1]
+			else:
+				weight_res = [0.5, 0.1, 0.1, 0.1, 0.1, 0.1]
 
-			# [epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,args.cuda)
-			[epoch_test_accuracy] = test(test_loader,epoch,model,args.cuda) # test accuracy after when each epoch train ends
+			[epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,weight_res,args.cuda)
+			epoch_test_accuracy = test(test_loader,epoch,model,weight_res,args.cuda) # test accuracy after when each epoch train ends
 
 			# epoch_train_loss = 0
-			epoch_train_accuracy = 1
 			train_loss_record[epoch-1] = epoch_train_loss
-			train_accuracy_record[epoch-1] = epoch_train_accuracy
 
-			epoch_test_loss = 0
-			epoch_test_accuracy = 1
-			test_loss_record[epoch-1] = epoch_test_loss
+			# epoch_test_accuracy = 1
 			test_accuracy_record[epoch-1] = epoch_test_accuracy
 
 			# update train loss plot
 			line1.set_ydata(train_loss_record)
-			# line2.set_ydata(train_accuracy_record)
-			# line3.set_ydata(test_loss_record)
 			line4.set_ydata(test_accuracy_record)
 
-			if epoch == start_epoch:
-				continue
-			else:
-				ax1.set_xlim([start_epoch,epoch])
-			ax1.set_ylim([0,2.5])
-			# ax1.set_ylim([0,max(train_loss_record)]) # cannot function well when resume training, going to be fixed
+			# if epoch == start_epoch:
+			# 	continue
+			# else:
+			# 	ax1.set_xlim([start_epoch,epoch])
+
+			ax1.set_xlim([1,epoch])
+			# ax1.set_ylim([0,2.5])
+			ax1.set_ylim([0,max(train_loss_record)]) # cannot function well when resume training, going to be fixed
 			# ax2.set_ylim([0,max(train_accuracy_record)])
 			ax1.set_title('Epoch: %s \nTrain Loss: %s, Test Accuracy: %s\n Benchmark: %s s/epoch'\
 				%(epoch, \
@@ -464,8 +463,6 @@ def main(args):
 			# save snapshot
 			if epoch % args.log_interval == 0:
 				snapshot['train_loss'] = train_loss_record
-				snapshot['train_accuracy'] = train_accuracy_record
-				snapshot['test_loss'] = test_loss_record
 				snapshot['test_accuracy'] = test_accuracy_record
 				snapshot_path = args.snapshot + '/snapshot_' + str(epoch) + '.pth.tar'
 				torch.save(snapshot, snapshot_path)

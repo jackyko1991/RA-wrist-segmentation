@@ -100,7 +100,7 @@ class FCN(nn.Module):
 
 		# resnet = models.resnet101(pretrained=False) # pretrained network is not suitable for this case
 		# resnet = models.resnet50(pretrained=False)
-		resnet = ResNet(models.resnet.Bottleneck, [3, 4, 6, 3])
+		resnet = ResNet(models.resnet.Bottleneck,model.resnet.DeconvBottleneck, [3, 4, 6, 3], self.num_classes)
 		# resnet = ResNet(models.resnet.Bottleneck, [3, 4, 23, 3])
 
 		self.conv1 = resnet.conv1
