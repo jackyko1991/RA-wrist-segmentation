@@ -61,21 +61,9 @@ class NumpyToPIL(object):
 		img = np.squeeze(img)
 		seg = np.squeeze(seg)
 
-		# img = Image.fromarray(np.uint8(img*255))
-		#print("---------")
-		#print np.amin(img)
-		#print np.amax(img) 
-
 		img = (img - np.amin(img))/(np.amax(img)-np.amin(img))
-		#print np.amin(img)
-		#print np.amax(img) 
 		img = Image.fromarray(np.uint8(img*255))
 
-		# # convert image to 3 channel
-		# img3C = np.zeros((img.size[0],img.size[1],3))
-		# img3C[:,:,0] = img
-		# img3C[:,:,1] = img
-		# img3C[:,:,2] = img
 		seg = Image.fromarray(seg)
 
 		return {'image': img, 'segmentation': seg}
@@ -121,9 +109,35 @@ class Padding(object):
 
 			return {'image': img, 'segmentation': seg}
 
+# class Crop(object):
+# 	"""Crop the image in a sample.
+#     Args:
+#         output_size (tuple): Desired crop region e.g.:(istart,iend,jstart,jend, slice).
+#     """
+
+# 	def __init__(self, output_region):
+# 		assert isinstance(output_size, tuple)
+# 		assert len(output_region) == 5
+# 		self.output_region = output_region
+
+# 	def __call__(self,sample):
+# 		img, seg = sample['image'], sample['segmentation']
+# 		size_old = img.GetSize()
+# 		size_new = [self.output_region[1]-self.output_region[0],self.output_region[3]-self.output_region[2],1]
+
+# 		# set the cropping roi
+# 		roiFilter = sitk.RegionOfInterestImageFilter()
+# 		roiFilter.SetSize(size_new)
+# 		roiFilter.SetIndex([self.output_region[0],self.output_region[2],self.output_region[3]])
+
+# 		img_crop = roiFilter.Execute(img)
+# 		seg_crop = roiFilter.Execute(seg)
+
+# 		return {'image': img_crop, 'segmentation': seg_crop}
+
 class RandomCrop(object):
-	"""Crop randomly the image in a sample. This is usually used for datat augmentation.
-		Drop ratio is implemented for randomly dropout crops with empty label. (Default to be 0.2)
+	"""Crop randomly the image in a sample. This is usually used for data augmentation.
+		Drop ratio is implemented for randomly dropout crops with empty label. (Default to be 0.2, set to 0 if don't want empty labels)
 		This transformation only applicable in train mode
     Args:
         output_size (tuple or int): Desired output size. If int, cubic crop is made.
@@ -181,12 +195,34 @@ class RandomCrop(object):
 	def drop(self,probability):
 		return random.random() <= probability
 
+class Rotate(object):
+	def __call__(self, sample):
+		img, seg = sample['image'], sample['segmentation']
+
+		n = random.randint(0, 4)
+
+		img = img.rotate(n*90)
+		seg = seg.rotate(n*90)
+
+		return {'image': img, 'segmentation': seg}
+
 class ToLabel(object):
 	def __call__(self, inputs):
 		tensors = []
 		for i in inputs:
 			tensors.append(torch.from_numpy(np.array(i)).long())
 		return tensors
+
+class Threshold(object):
+	def __init__(self, lower_threshold = 0, upper_threshold = 1):
+		self.lower_threshold = lower_threshold
+		self.upper_threshold = upper_threshold
+
+	def __call__(self, inputs):
+		for i in inputs:
+			i[i < self.lower_threshold] = 0
+			i[i >= self.upper_threshold] = self.upper_threshold
+		return inputs
 
 class ReLabel(object):
 	def __init__(self, olabel, nlabel):

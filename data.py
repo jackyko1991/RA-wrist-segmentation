@@ -56,19 +56,17 @@ class NiftiDataSet(torch.utils.data.Dataset):
 
 		if self.img_transform:
 			img = self.img_transform(sample['image'])
-			img = [img]
+		else:
+			img = sample['image']
+		img = [img]
 
 		if self.label_transform:
 			seg = self.label_transform(sample['segmentation'])
-			seg = [seg]
+		else:
+			seg = sample['segmentation']
+		seg = [seg]
 
 		sample = {'image':img, 'segmentation': seg}
-
-		# print(type(img))
-		# print(img[0].size())
-		# print(type(seg))
-		# print(len(seg[0]))
-		# exit()
 
 		return sample 
 
