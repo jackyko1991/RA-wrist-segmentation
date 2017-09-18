@@ -32,7 +32,7 @@ def parser_init(parser):
 	args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 	# change parser value here
-	args.snapshot = '../../snapshot-unet/snapshot_1500.pth.tar'
+	args.snapshot = '../../snapshot-unet/snapshot_2500.pth.tar'
 	args.data_folder = '../../data/evaluate'
 	args.model = 'unet'
 	# args.snapshot = 'J:/Deep_Learning/RA_wrist_segmentation/snapshot'
@@ -51,7 +51,7 @@ def load_data(data_path,workers=0):
 
 	# load data
 	data_set = data.NiftiDataSet(os.path.join(data_path),transform=data_transform,train=False)
-	data_loader = torch.utils.data.DataLoader(data_set, batch_size=1,shuffle=True,num_workers=workers,pin_memory=True)
+	data_loader = torch.utils.data.DataLoader(data_set, batch_size=1,shuffle=False,num_workers=workers,pin_memory=True)
 
 	return data_loader
 

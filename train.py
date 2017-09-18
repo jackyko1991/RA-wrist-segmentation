@@ -64,7 +64,7 @@ def parser_init(parser):
 	args.momentum = 0.9
 	args.model = 'unet'
 	args.snapshot = '../../snapshot-unet'
-	args.resume = '../../snapshot-unet/snapshot_1500.pth.tar'
+	args.resume = '../../snapshot-unet/snapshot_2500.pth.tar'
 	# args.snapshot = '../../snapshot-50'
 	# args.resume = '../../snapshot-50/snapshot_1200.pth.tar'
 	args.data_folder = '../../data'
@@ -135,13 +135,14 @@ def train(train_loader,epoch,model,optimizer,criterion,cuda=True):
 	for batch_idx, data in enumerate(train_loader):
 		image = data['image'][0]
 		label= data['segmentation'][0][0] # the label is list of mulitresolutional image, 1st data is non-zoomed data
+		
 		label = label[:,np.newaxis,...]
 
 		# convert image to 3 channel
 		img_tmp = np.zeros((image.size(0),3,image.size(2),image.size(3)))
-		img_tmp[:,0,:,:] = image.numpy()
-		img_tmp[:,1,:,:] = image.numpy()
-		img_tmp[:,2,:,:] = image.numpy()
+		img_tmp[:,0,:,:] = image.numpy().squeeze()
+		img_tmp[:,1,:,:] = image.numpy().squeeze()
+		img_tmp[:,2,:,:] = image.numpy().squeeze()
 
 		image = torch.from_numpy(img_tmp).float()
 
@@ -192,6 +193,7 @@ def test(test_loader,epoch,model,cuda=True):
 	for batch_idx, data in enumerate(test_loader):
 		image = data['image'][0]
 		label= data['segmentation'][0][0] # the label is list of mulitresolutional image, 1st data is non-zoomed data
+		
 		label = label[:,np.newaxis,...]
 
 		# convert image to 3 channel
@@ -540,7 +542,7 @@ def main(args):
 				[epoch_train_loss, snapshot] = train(train_loader,epoch,model,optimizer,criterion,args.cuda)
 				epoch_test_accuracy = test(test_loader,epoch,model,args.cuda) # test accuracy after when each epoch train ends
 
-			epoch_train_loss = 0
+			# epoch_train_loss = 0
 			train_loss_record[epoch-1] = epoch_train_loss
 
 			# epoch_test_accuracy = 1
